@@ -24,3 +24,7 @@ child-binding:
       type: uint8-array
       description: |
         Specifies the MAC address that was assigned to the port
+    label:
+      type: string
+      description: |
+        Human readable string describing the name of the device.

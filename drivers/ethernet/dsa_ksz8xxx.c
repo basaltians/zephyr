@@ -30,6 +30,9 @@ LOG_MODULE_REGISTER(LOG_MODULE_NAME, CONFIG_ETHERNET_LOG_LEVEL);
 #elif CONFIG_DSA_KSZ8794
 #define DT_DRV_COMPAT microchip_ksz8794
 #include "dsa_ksz8794.h"
+#elif CONFIG_DSA_KSZ8567
+#define DT_DRV_COMPAT microchip_ksz8567
+#include "dsa_ksz8567.h"
 #else
 #error "Unsupported KSZ chipset"
 #endif
@@ -48,6 +51,24 @@ static void dsa_ksz8xxx_write_reg(const struct ksz8xxx_data *pdev,
 				  uint16_t reg_addr, uint8_t value)
 {
 #if defined(CONFIG_DSA_SPI)
+#if defined(CONFIG_DSA_KSZ8567)
+	uint8_t buffer_tx[5] = {0};
+
+	const struct spi_buf tx_buf[] = {{
+		.buf = buffer_tx,
+		.len = sizeof(buffer_tx),
+	}};
+	const struct spi_buf_set tx = {
+		.buffers = tx_buf,
+		.count = ARRAY_SIZE(tx_buf),
+	};
+
+	sys_put_be32((uint32_t)reg_addr << 5, buffer_tx);
+	buffer_tx[0] = KSZ8XXX_SPI_CMD_WR;
+	buffer_tx[4] = value;
+
+	spi_write_dt(&pdev->spi, &tx);
+#else
 	uint8_t buf[3];
 
 	const struct spi_buf tx_buf = {
@@ -65,12 +86,44 @@ static void dsa_ksz8xxx_write_reg(const struct ksz8xxx_data *pdev,
 
 	spi_write_dt(&pdev->spi, &tx);
 #endif
+#endif
 }
 
 static void dsa_ksz8xxx_read_reg(const struct ksz8xxx_data *pdev,
 				 uint16_t reg_addr, uint8_t *value)
 {
 #if defined(CONFIG_DSA_SPI)
+#if defined(CONFIG_DSA_KSZ8567)
+	uint8_t buffer_tx[5] = {0};
+	uint8_t buffer_rx[sizeof(buffer_tx)] = {0};
+	const struct spi_buf tx_buf[] = {{
+		.buf = buffer_tx,
+		.len = sizeof(buffer_tx),
+	}};
+	const struct spi_buf rx_buf[] = {{
+		.buf = buffer_rx,
+		.len = sizeof(buffer_rx),
+	}};
+	const struct spi_buf_set tx = {
+		.buffers = tx_buf,
+		.count = ARRAY_SIZE(tx_buf),
+	};
+	const struct spi_buf_set rx = {
+		.buffers = rx_buf,
+		.count = ARRAY_SIZE(rx_buf),
+	};
+
+	sys_put_be32((uint32_t)reg_addr << 5, buffer_tx);
+	buffer_tx[0] = KSZ8XXX_SPI_CMD_RD;
+
+	if (!spi_transceive_dt(&pdev->spi, &tx, &rx)) {
+		*value = buffer_rx[sizeof(buffer_rx) - 1];
+	} else {
+		LOG_DBG("Failure while reading register 0x%04x", reg_addr);
+		*value = 0U;
+	}
+
+#else
 	uint8_t buf[3];
 
 	const struct spi_buf tx_buf = {
@@ -101,6 +154,7 @@ static void dsa_ksz8xxx_read_reg(const struct ksz8xxx_data *pdev,
 		LOG_DBG("Failure while reading register 0x%04x", reg_addr);
 		*value = 0U;
 	}
+#endif
 #endif
 }
 
@@ -184,6 +238,7 @@ static int dsa_ksz8xxx_write_static_mac_table(struct ksz8xxx_data *pdev,
 	 * Write to Register 111 with 0x0x (trigger the write operation, to
 	 * table entry x)
 	 */
+#if !defined(CONFIG_DSA_KSZ8567)
 	dsa_ksz8xxx_write_reg(pdev, KSZ8XXX_REG_IND_DATA_7, p[7]);
 	dsa_ksz8xxx_write_reg(pdev, KSZ8XXX_REG_IND_DATA_6, p[6]);
 	dsa_ksz8xxx_write_reg(pdev, KSZ8XXX_REG_IND_DATA_5, p[5]);
@@ -195,6 +250,7 @@ static int dsa_ksz8xxx_write_static_mac_table(struct ksz8xxx_data *pdev,
 
 	dsa_ksz8xxx_write_reg(pdev, KSZ8XXX_REG_IND_CTRL_0, 0x00);
 	dsa_ksz8xxx_write_reg(pdev, KSZ8XXX_REG_IND_CTRL_1, entry_addr);
+#endif
 
 	return 0;
 }
@@ -244,7 +300,7 @@ static int dsa_ksz8xxx_read_static_mac_table(struct ksz8xxx_data *pdev,
 	 * Write register 0x78 (120)
 	 *
 	 */
-
+#if !defined(CONFIG_DSA_KSZ8567)
 	dsa_ksz8xxx_write_reg(pdev, KSZ8XXX_REG_IND_CTRL_0, 0x10);
 	dsa_ksz8xxx_write_reg(pdev, KSZ8XXX_REG_IND_CTRL_1, entry_addr);
 
@@ -256,6 +312,7 @@ static int dsa_ksz8xxx_read_static_mac_table(struct ksz8xxx_data *pdev,
 	dsa_ksz8xxx_read_reg(pdev, KSZ8XXX_REG_IND_DATA_2, &p[2]);
 	dsa_ksz8xxx_read_reg(pdev, KSZ8XXX_REG_IND_DATA_1, &p[1]);
 	dsa_ksz8xxx_read_reg(pdev, KSZ8XXX_REG_IND_DATA_0, &p[0]);
+#endif
 
 	return 0;
 }
@@ -294,6 +351,62 @@ static int dsa_ksz8xxx_switch_setup(const struct ksz8xxx_data *pdev)
 	dsa_ksz8xxx_read_reg(pdev, KSZ8863_GLOBAL_CTRL2, &tmp);
 	tmp &= ~KSZ8863_GLOBAL_CTRL2_LEG_MAX_PKT_SIZ_CHK_ENA;
 	dsa_ksz8xxx_write_reg(pdev, KSZ8863_GLOBAL_CTRL2, tmp);
+
+	return 0;
+}
+#endif
+
+#if CONFIG_DSA_KSZ8567
+static int dsa_ksz8xxx_switch_setup(struct ksz8xxx_data *pdev)
+{
+	uint8_t tmp, i;
+
+	/*
+	 * Loop through ports - The same setup when tail tagging is enabled or
+	 * disabled.
+	 */
+	for (i = KSZ8XXX_FIRST_PORT; i <= KSZ8XXX_LAST_PORT; i++) {
+		/* Enable transmission, reception and switch address learning */
+		dsa_ksz8xxx_read_reg(pdev, KSZ8567_PORTn_MSTP_STATE(i), &tmp);
+		tmp |= KSZ8567_PORTn_MSTP_TRANSMIT_EN;
+		tmp |= KSZ8567_PORTn_MSTP_RECEIVE_EN;
+		tmp &= ~KSZ8567_PORTn_MSTP_LEARNING_DIS;
+		dsa_ksz8xxx_write_reg(pdev, KSZ8567_PORTn_MSTP_STATE(i), tmp);
+	}
+
+#if defined(CONFIG_DSA_KSZ_TAIL_TAGGING)
+	/* Enable tail tag feature */
+	dsa_ksz8xxx_read_reg(pdev, KSZ8567_PORT6_OP_CTRL0, &tmp);
+	tmp |= KSZ8567_PORTn_OP_CTRL0_TAIL_TAG_EN;
+	dsa_ksz8xxx_write_reg(pdev, KSZ8567_PORT6_OP_CTRL0, tmp);
+
+	dsa_ksz8xxx_read_reg(pdev, KSZ8567_SWITCH_MAC_CTRL0, &tmp);
+	tmp &= ~KSZ8567_SWITCH_MAC_CTRL0_FRAME_LEN_CHECK_EN;
+	dsa_ksz8xxx_write_reg(pdev, KSZ8567_SWITCH_MAC_CTRL0, tmp);
+#else
+	/* Disable tail tag feature */
+	dsa_ksz8xxx_read_reg(pdev, KSZ8567_PORT6_OP_CTRL0, &tmp);
+	tmp &= ~KSZ8567_PORTn_OP_CTRL0_TAIL_TAG_EN;
+	dsa_ksz8xxx_write_reg(pdev, KSZ8567_PORT6_OP_CTRL0, tmp);
+#endif
+
+	dsa_ksz8xxx_write_reg(pdev, KSZ8567_SWITCH_LUE_CTRL0,
+			      KSZ8567_SWITCH_LUE_CTRL0_AGE_COUNT_DEFAULT |
+			      KSZ8567_SWITCH_LUE_CTRL0_HASH_OPTION_CRC);
+
+	dsa_ksz8xxx_write_reg(pdev, KSZ8567_SWITCH_LUE_CTRL3,
+			      KSZ8567_SWITCH_LUE_CTRL3_AGE_PERIOD_DEFAULT);
+
+	dsa_ksz8xxx_read_reg(pdev, KSZ8567_PORT6_XMII_CTRL1, &tmp);
+	tmp |= KSZ8567_PORTn_XMII_CTRL1_RGMII_ID_IG;
+	tmp |= KSZ8567_PORTn_XMII_CTRL1_RGMII_ID_EG;
+	dsa_ksz8xxx_write_reg(pdev, KSZ8567_PORT6_XMII_CTRL1, tmp);
+
+	dsa_ksz8xxx_read_reg(pdev, KSZ8567_PORT6_XMII_CTRL0, &tmp);
+	LOG_DBG("KSZ8567: PORT6 XMII CTRL0: 0x%04x 0x%02x", KSZ8567_PORT6_XMII_CTRL0, tmp);
+
+	dsa_ksz8xxx_read_reg(pdev, KSZ8567_PORT6_XMII_CTRL1, &tmp);
+	LOG_DBG("KSZ8567: PORT6 XMII CTRL1: 0x%04x 0x%02x", KSZ8567_PORT6_XMII_CTRL1, tmp);
 
 	return 0;
 }
@@ -823,6 +936,7 @@ static int dsa_ksz8xxx_get_mac_table_entry(const struct device *dev,
 }
 
 #if defined(CONFIG_DSA_KSZ_TAIL_TAGGING)
+#if defined(CONFIG_DSA_KSZ8863) || defined(CONFIG_DSA_KSZ8794)
 #define DSA_KSZ8795_TAIL_TAG_OVRD	BIT(6)
 #define DSA_KSZ8795_TAIL_TAG_LOOKUP	BIT(7)
 
@@ -831,13 +945,26 @@ static int dsa_ksz8xxx_get_mac_table_entry(const struct device *dev,
 
 #define DSA_MIN_L2_FRAME_SIZE 64
 #define DSA_L2_FCS_SIZE 4
+#elif defined(CONFIG_DSA_KSZ8567)
+#define DSA_KSZ8795_TAIL_TAG_OVRD   sys_cpu_to_be16(BIT(9))
+#define DSA_KSZ8795_TAIL_TAG_LOOKUP sys_cpu_to_be16(BIT(10))
+
+#define DSA_KSZ8794_EGRESS_TAG_LEN  1
+#define DSA_KSZ8794_INGRESS_TAG_LEN 2
+
+#define DSA_MIN_L2_FRAME_SIZE 64
+#define DSA_L2_FCS_SIZE       4
+#else
+#error "Unsupported KSZ chipset"
+#endif
 
 struct net_pkt *dsa_ksz8xxx_xmit_pkt(struct net_if *iface, struct net_pkt *pkt)
 {
 	struct ethernet_context *ctx = net_if_l2_data(iface);
 	struct net_eth_hdr *hdr = NET_ETH_HDR(pkt);
 	struct net_linkaddr lladst;
-	uint8_t port_idx, *dbuf;
+	uint8_t *dbuf;
+	uint16_t port_idx;
 	struct net_buf *buf;
 	size_t len, pad = 0;
 
@@ -868,7 +995,7 @@ struct net_pkt *dsa_ksz8xxx_xmit_pkt(struct net_if *iface, struct net_pkt *pkt)
 	dbuf = net_buf_simple_tail(&(buf->b));
 	memset(dbuf, 0x0, pad + DSA_KSZ8794_INGRESS_TAG_LEN);
 
-	/*
+	/* KSZ8863 & KSZ8794
 	 * For master port (eth0) set the bit 7 to use look-up table to pass
 	 * packet to correct interface (bits [0..6] _are_ ignored).
 	 *
@@ -876,6 +1003,18 @@ struct net_pkt *dsa_ksz8xxx_xmit_pkt(struct net_if *iface, struct net_pkt *pkt)
 	 * bit 0 -> eth1, bit 1 -> eth2. bit 2 -> eth3
 	 * It may be also necessary to set bit 6 to "anyhow send packets to
 	 * specified port in Bits[3:0]". This may be needed for RSTP
+	 * implementation (when the switch port is disabled, but shall handle
+	 * LLDP packets).
+	 */
+
+	/* KSZ8567
+	 * For master port (eth0) set the bit 10 to use look-up table to pass
+	 * packet to correct interface (bits [0..6] _are_ ignored).
+	 *
+	 * For slave ports (lan1..5) just set the tag properly:
+	 * bit 0 -> eth1, bit 1 -> eth2. bit 2 -> eth3
+	 * It may be also necessary to set bit 9 to "anyhow send packets to
+	 * specified port in Bits[6:0]". This may be needed for RSTP
 	 * implementation (when the switch port is disabled, but shall handle
 	 * LLDP packets).
 	 */
@@ -890,7 +1029,7 @@ struct net_pkt *dsa_ksz8xxx_xmit_pkt(struct net_if *iface, struct net_pkt *pkt)
 		lladst.addr[2], lladst.addr[3], lladst.addr[4], lladst.addr[5]);
 
 	/* The tail tag shall be placed after the padding (if present) */
-	dbuf[pad] = port_idx;
+	memcpy(&dbuf[pad], &port_idx, DSA_KSZ8794_INGRESS_TAG_LEN);
 
 	/* Set proper len member for the actual struct net_buf_simple */
 	net_buf_add(buf, pad + DSA_KSZ8794_INGRESS_TAG_LEN);
@@ -947,7 +1086,7 @@ static struct net_if *dsa_ksz8xxx_get_iface(struct net_if *iface,
 	 */
 	iface_sw = net_if_get_by_index(pnum + 2);
 
-	ctx = net_if_l2_data(iface);
+	ctx = net_if_l2_data(iface_sw);
 	NET_DBG("TT - plen: %d pnum: %d pos: 0x%p dsa_port_idx: %d",
 		plen - DSA_KSZ8794_EGRESS_TAG_LEN, pnum,
 		net_pkt_cursor_get_pos(pkt), ctx->dsa_port_idx);
@@ -1061,7 +1200,7 @@ static struct dsa_api dsa_api_f = {
  *
  * For simple cases it is just good enough.
  */
-
+#if defined(CONFIG_DSA_KSZ8863) || defined(CONFIG_DSA_KSZ8794)
 #define NET_SLAVE_DEVICE_INIT_INSTANCE(slave, n)                           \
 	const struct dsa_slave_config dsa_0_slave_##slave##_config = {     \
 		.mac_addr = DT_PROP_OR(slave, local_mac_address, {0})      \
@@ -1089,6 +1228,24 @@ static struct dsa_api dsa_api_f = {
 		NET_SLAVE_DEVICE_INIT_INSTANCE(slave, 3)
 #define NET_SLAVE_DEVICE_4_INIT_INSTANCE(slave)				\
 		NET_SLAVE_DEVICE_INIT_INSTANCE(slave, 4)
+
+#elif defined(CONFIG_DSA_KSZ8567)
+#define NET_SLAVE_DEVICE_INIT_INSTANCE(slave, n)                           \
+	const struct dsa_slave_config dsa_##n##_slave_##slave##_config = { \
+		.mac_addr = DT_PROP_OR(slave, local_mac_address, {0})      \
+	};                                                                 \
+	NET_DEVICE_DT_DEFINE(                                              \
+	slave,                                                             \
+	dsa_port_init,                                                     \
+	NULL,                                                              \
+	&dsa_context_##n,                                                  \
+	&dsa_##n##_slave_##slave##_config,                                 \
+	CONFIG_ETH_INIT_PRIORITY,                                          \
+	&dsa_eth_api_funcs,                                                \
+	ETHERNET_L2,                                                       \
+	NET_L2_GET_CTX_TYPE(ETHERNET_L2),                                  \
+	NET_ETH_MTU);
+#endif
 
 #if defined(CONFIG_DSA_SPI)
 #define DSA_SPI_BUS_CONFIGURATION(n)					\

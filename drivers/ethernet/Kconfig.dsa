@@ -39,15 +39,24 @@ config DSA_KSZ8863
 	help
 	  Add support for KSZ8863 DSA device driver.
 
+config DSA_KSZ8567
+	bool "Support for KSZ8567"
+	default y
+	depends on DT_HAS_MICROCHIP_KSZ8567_ENABLED
+	select DSA_KSZ8XXX
+	select SPI if $(dt_compat_on_bus,$(DT_COMPAT_MICROCHIP_KSZ8567),spi)
+	help
+	  Add support for KSZ8567 DSA device driver.
+
 config DSA_KSZ_TAIL_TAGGING
 	bool "Support for tail tagging"
-	depends on DSA_KSZ8794 || DSA_KSZ8863
+	depends on DSA_KSZ8794 || DSA_KSZ8863 || DSA_KSZ8567
 	help
 	  Add support for tail tagging on DSA device.
 
 config DSA_SPI
 	bool "Support for PHY SPI interface"
-	depends on SPI && (DSA_KSZ8794 || DSA_KSZ8863)
+	depends on SPI && (DSA_KSZ8794 || DSA_KSZ8863 || DSA_KSZ8567)
 	help
 	  Use SPI bus to communicate with PHY
 

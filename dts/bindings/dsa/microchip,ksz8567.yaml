@@ -1,0 +1,10 @@
+# Copyright (c), 2024 Basalte bv
+# SPDX-License-Identifier: Apache-2.0
+
+description: |
+  KSZ8567 7-Port ethernet switch with SPI interface
+
+compatible: "microchip,ksz8567"
+
+include: [microchip_dsa.yaml]
+
