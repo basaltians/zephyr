@@ -408,6 +408,10 @@ static int dsa_ksz8xxx_switch_setup(struct ksz8xxx_data *pdev)
 	dsa_ksz8xxx_read_reg(pdev, KSZ8567_PORT6_XMII_CTRL1, &tmp);
 	LOG_DBG("KSZ8567: PORT6 XMII CTRL1: 0x%04x 0x%02x", KSZ8567_PORT6_XMII_CTRL1, tmp);
 
+	dsa_ksz8xxx_read_reg(pdev, KSZ8567_OUTPUT_CLOCK_CTRL, &tmp);
+	tmp &= ~KSZ8567_OUTPUT_SYNCLKO_OUTPUT_PIN_ENABLE;
+	dsa_ksz8xxx_write_reg(pdev, KSZ8567_OUTPUT_CLOCK_CTRL, tmp);
+
 	return 0;
 }
 #endif

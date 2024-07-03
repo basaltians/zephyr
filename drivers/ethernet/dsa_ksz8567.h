@@ -59,6 +59,9 @@
 #define KSZ8567_CHIP_ID1_ID_DEFAULT                     0x85
 #define KSZ8863_SOFTWARE_RESET_SET                      BIT(0)
 
+#define KSZ8567_OUTPUT_CLOCK_CTRL                       0x0103
+#define KSZ8567_OUTPUT_SYNCLKO_OUTPUT_PIN_ENABLE        BIT(1)
+
 enum {
 	/* We are assuming that port 7 is not being used
 	 * KSZ8567 register's MAP
