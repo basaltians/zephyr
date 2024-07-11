@@ -629,6 +629,31 @@ static inline void nxp_enet_unique_mac(uint8_t *mac_addr)
 #include <fsl_ocotp.h>
 #endif
 
+/* Copied from NXP_ENET_GENERATE_MAC_UNIQUE on Zephyr commit: f86f390baf27a48768b6bd3cd1285b54970c537c
+*  Support for devices that have been sent in the field without a mac address programmed in the fuses
+*/
+static void check_apply_nxp_enet_unique_mac_legacy(uint8_t *mac_addr)
+{
+	uint32_t id;
+
+	/* As soon as 1 byte differs from 0, we assume that a mac address has been burned in fuses */
+	for (int i = 0; i < NET_LINK_ADDR_MAX_LENGTH; i++) {
+		if (mac_addr[i] != 0) {
+			return;
+		}
+	}
+
+	id = ETH_NXP_ENET_UNIQUE_ID;
+
+	mac_addr[0] = FREESCALE_OUI_B0;
+	mac_addr[0] |= 0x02; /* force LAA bit */
+	mac_addr[1] = FREESCALE_OUI_B1;
+	mac_addr[2] = FREESCALE_OUI_B2;
+	mac_addr[3] = id >> 8;
+	mac_addr[4] = id >> 16;
+	mac_addr[5] = id >> 0;
+}
+
 static inline void nxp_enet_fused_mac(uint8_t *mac_addr)
 {
 #ifdef CONFIG_SOC_FAMILY_NXP_IMXRT
@@ -695,6 +720,7 @@ static int eth_nxp_enet_init(const struct device *dev)
 		break;
 	case MAC_ADDR_SOURCE_FUSED:
 		nxp_enet_fused_mac(data->mac_addr);
+		check_apply_nxp_enet_unique_mac_legacy(data->mac_addr);
 		break;
 	default:
 		return -ENOTSUP;
