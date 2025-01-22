@@ -8,7 +8,7 @@
 
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/drivers/i2c.h>
-#include <zephyr/drivers/input/cy8cmbr3xxx.h>
+#include <zephyr/input/cy8cmbr3xxx.h>
 #include <zephyr/input/input.h>
 #include <zephyr/logging/log.h>
 
@@ -143,6 +143,9 @@ LOG_MODULE_REGISTER(cy8cmbr3xxx, CONFIG_INPUT_LOG_LEVEL);
 #define CY8CMBR3XXX_DEBUG_AVG_RAW_COUNT0      0xE4
 #define CY8CMBR3XXX_SYNC_COUNTER2             0xE7
 
+#define CY8CMBR3XXX_CTRL_CMD_CALC_CRC 0x02
+#define CY8CMBR3XXX_CTRL_CMD_RESET    0xFF
+
 /* The controller wakes up from the low-power state on an address match but sends NACK
  * until it transitions into the Active state. When the device NACKs a transaction, the host is
  * expected to retry the transaction until it receives an ACK. Typically, no more than 3 retries are
@@ -169,8 +172,7 @@ struct cy8cmbr3xxx_data {
 	uint8_t prev_proximity_state;
 };
 
-static int cypress_cy8cmbr3xxx_i2c_read(const struct device *dev, uint8_t address, void *buf,
-					size_t len)
+static int cy8cmbr3xxx_i2c_read(const struct device *dev, uint8_t address, void *buf, size_t len)
 {
 	const struct cy8cmbr3xxx_config *config = dev->config;
 	int ret;
@@ -185,8 +187,8 @@ static int cypress_cy8cmbr3xxx_i2c_read(const struct device *dev, uint8_t addres
 	return ret;
 }
 
-static int cypress_cy8cmbr3xxx_i2c_write(const struct device *dev, uint8_t address, const void *buf,
-					 size_t len)
+static int cy8cmbr3xxx_i2c_write(const struct device *dev, uint8_t address, const void *buf,
+				 size_t len)
 {
 	const struct cy8cmbr3xxx_config *config = dev->config;
 	int ret;
@@ -201,8 +203,7 @@ static int cypress_cy8cmbr3xxx_i2c_write(const struct device *dev, uint8_t addre
 	return ret;
 }
 
-static int cypress_cy8cmbr3xxx_wait_for_command_completion(const struct device *dev,
-							   k_timeout_t timeout)
+static int cy8cmbr3xxx_wait_for_command_completion(const struct device *dev, k_timeout_t timeout)
 {
 	uint8_t current_command;
 	int ret;
@@ -212,86 +213,81 @@ static int cypress_cy8cmbr3xxx_wait_for_command_completion(const struct device *
 		/* Wait for the completion of the command. After a reset command, it can
 		 * happen that the device NACKs for some time.
 		 */
-		ret = cypress_cy8cmbr3xxx_i2c_read(dev, CY8CMBR3XXX_CTRL_CMD, &current_command,
-						   sizeof(uint8_t));
+		ret = cy8cmbr3xxx_i2c_read(dev, CY8CMBR3XXX_CTRL_CMD, &current_command,
+					   sizeof(uint8_t));
 
 		/* As soon as current_command is 0x00, the command is completed */
 		if (ret == 0 && current_command == 0x00) {
-			break;
-		}
-
-		if (sys_timepoint_expired(end)) {
-			LOG_ERR("Wait for command completion timed out");
-			return -ETIMEDOUT;
+			return 0;
 		}
 
 		k_msleep(1);
-	} while (true);
+	} while (!sys_timepoint_expired(end));
 
-	return 0;
+	LOG_ERR("Wait for command completion timed out");
+
+	return -ETIMEDOUT;
 }
 
-int cypress_cy8cmbr3xxx_configure(const struct device *dev,
-				  const struct cy8cmbr3xxx_config_data *config)
+int cy8cmbr3xxx_configure(const struct device *dev, const struct cy8cmbr3xxx_config_data *config)
 {
 	int ret;
-	uint8_t read_config[CY8CMBR3XXX_EZ_CLICK_CONFIG_SIZE] = {0};
+	uint8_t read_config[CY8CMBR3XXX_EZ_CLICK_CONFIG_SIZE];
+	uint8_t command;
 
 	if (config == NULL) {
-		LOG_ERR("Config is NULL");
 		return -EINVAL;
 	}
 
 	/* Read the complete configuration */
-	ret = cypress_cy8cmbr3xxx_i2c_read(dev, 0x00, read_config, sizeof(read_config));
+	ret = cy8cmbr3xxx_i2c_read(dev, CY8CMBR3XXX_SENSOR_EN, read_config, sizeof(read_config));
 	if (ret < 0) {
 		LOG_ERR("Failed to read i2c (%d)", ret);
 		return ret;
 	}
 
-	if (memcmp(read_config, config->data, CY8CMBR3XXX_EZ_CLICK_CONFIG_SIZE) != 0) {
-		uint8_t command;
+	if (memcmp(read_config, config->data, sizeof(config->data)) == 0) {
+		return 0;
+	}
 
-		/* Write the complete configuration of 128 bytes to the CY8CMBR3XXX controller */
-		ret = cypress_cy8cmbr3xxx_i2c_write(dev, 0x00, config->data,
-						    CY8CMBR3XXX_EZ_CLICK_CONFIG_SIZE);
-		if (ret < 0) {
-			LOG_ERR("Failed to write i2c (%d)", ret);
-			return ret;
-		}
+	/* Write the complete configuration of 128 bytes to the CY8CMBR3XXX controller */
+	ret = cy8cmbr3xxx_i2c_write(dev, CY8CMBR3XXX_SENSOR_EN, config->data, sizeof(config->data));
+	if (ret < 0) {
+		LOG_ERR("Failed to write i2c (%d)", ret);
+		return ret;
+	}
 
-		/* The device calculates a CRC checksum over the configuration data in this
-		 * register map and compares the result with the content of CONFIG_CRC. If the
-		 * two values match, the device saves the configuration and the CRC checksum to
-		 * nonvolatile memory.
-		 */
-		command = 0x02;
-		ret = cypress_cy8cmbr3xxx_i2c_write(dev, CY8CMBR3XXX_CTRL_CMD, &command, 1);
-		if (ret < 0) {
-			LOG_ERR("Failed to write i2c (%d)", ret);
-			return ret;
-		}
+	/* The device calculates a CRC checksum over the configuration data in this
+	 * register map and compares the result with the content of CONFIG_CRC. If the
+	 * two values match, the device saves the configuration and the CRC checksum to
+	 * nonvolatile memory.
+	 */
+	command = CY8CMBR3XXX_CTRL_CMD_CALC_CRC;
+	ret = cy8cmbr3xxx_i2c_write(dev, CY8CMBR3XXX_CTRL_CMD, &command, 1);
+	if (ret < 0) {
+		LOG_ERR("Failed to write i2c (%d)", ret);
+		return ret;
+	}
 
-		/* 600ms seems to be sufficient */
-		ret = cypress_cy8cmbr3xxx_wait_for_command_completion(dev, K_MSEC(600));
-		if (ret < 0) {
-			LOG_ERR("Failed to wait for command completion (%d)", ret);
-			return ret;
-		}
+	/* 600ms seems to be sufficient */
+	ret = cy8cmbr3xxx_wait_for_command_completion(dev, K_MSEC(600));
+	if (ret < 0) {
+		LOG_ERR("Failed to wait for command completion (%d)", ret);
+		return ret;
+	}
 
-		/* The device resets itself */
-		command = 0xff;
-		ret = cypress_cy8cmbr3xxx_i2c_write(dev, CY8CMBR3XXX_CTRL_CMD, &command, 1);
-		if (ret < 0) {
-			LOG_ERR("Failed to write i2c (%d)", ret);
-			return ret;
-		}
+	/* The device resets itself */
+	command = CY8CMBR3XXX_CTRL_CMD_RESET;
+	ret = cy8cmbr3xxx_i2c_write(dev, CY8CMBR3XXX_CTRL_CMD, &command, 1);
+	if (ret < 0) {
+		LOG_ERR("Failed to write i2c (%d)", ret);
+		return ret;
+	}
 
-		ret = cypress_cy8cmbr3xxx_wait_for_command_completion(dev, K_MSEC(50));
-		if (ret < 0) {
-			LOG_ERR("Failed to wait for command completion (%d)", ret);
-			return ret;
-		}
+	ret = cy8cmbr3xxx_wait_for_command_completion(dev, K_MSEC(50));
+	if (ret < 0) {
+		LOG_ERR("Failed to wait for command completion (%d)", ret);
+		return ret;
 	}
 
 	return 0;
@@ -304,11 +300,9 @@ static int cy8cmbr3xxx_process(const struct device *dev)
 	int ret;
 	uint16_t button_state, single_button_state;
 	uint8_t proximity_state, single_proximity_state;
-	uint8_t reg;
 
 	/* Request button status */
-	reg = CY8CMBR3XXX_BUTTON_STAT;
-	ret = cypress_cy8cmbr3xxx_i2c_read(dev, reg, &button_state, sizeof(uint16_t));
+	ret = cy8cmbr3xxx_i2c_read(dev, CY8CMBR3XXX_BUTTON_STAT, &button_state, sizeof(uint16_t));
 	if (ret < 0) {
 		LOG_ERR("Failed to read button status (%d)", ret);
 		return ret;
@@ -325,8 +319,8 @@ static int cy8cmbr3xxx_process(const struct device *dev)
 
 	/* Request proximity status */
 	if (config->proximity_codes_count > 0) {
-		reg = CY8CMBR3XXX_PROX_STAT;
-		ret = cypress_cy8cmbr3xxx_i2c_read(dev, reg, &proximity_state, sizeof(uint8_t));
+		ret = cy8cmbr3xxx_i2c_read(dev, CY8CMBR3XXX_PROX_STAT, &proximity_state,
+					   sizeof(uint8_t));
 		if (ret < 0) {
 			LOG_ERR("Failed to read proximity status (%d)", ret);
 			return ret;
@@ -395,7 +389,7 @@ static int cy8cmbr3xxx_init(const struct device *dev)
 
 	k_work_init(&data->work, cy8cmbr3xxx_work_handler);
 
-	if (!device_is_ready(config->i2c.bus)) {
+	if (!i2c_is_ready_dt(&config->i2c)) {
 		LOG_ERR("I2C controller device not ready");
 		return -ENODEV;
 	}
