@@ -3,12 +3,16 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#ifndef ZEPHYR_INCLUDE_DRIVERS_INPUT_CY8CMBR3XXX_H_
-#define ZEPHYR_INCLUDE_DRIVERS_INPUT_CY8CMBR3XXX_H_
+#ifndef ZEPHYR_INCLUDE_INPUT_CY8CMBR3XXX_H_
+#define ZEPHYR_INCLUDE_INPUT_CY8CMBR3XXX_H_
 
 #include <zephyr/types.h>
 
 #define CY8CMBR3XXX_EZ_CLICK_CONFIG_SIZE 128
+
+#ifdef __cplusplus
+extern "C" {
+#endif /* __cplusplus */
 
 struct cy8cmbr3xxx_config_data {
 	uint8_t data[CY8CMBR3XXX_EZ_CLICK_CONFIG_SIZE];
@@ -23,7 +27,11 @@ struct cy8cmbr3xxx_config_data {
  * @retval 0 if successful
  * @retval <0 if failed
  */
-int cypress_cy8cmbr3xxx_configure(const struct device *dev,
-				  const struct cy8cmbr3xxx_config_data *config_data);
+int cy8cmbr3xxx_configure(const struct device *dev,
+			  const struct cy8cmbr3xxx_config_data *config_data);
 
-#endif
+#ifdef __cplusplus
+}
+#endif /* __cplusplus */
+
+#endif /* ZEPHYR_INCLUDE_INPUT_CY8CMBR3XXX_H_ */
