@@ -1,0 +1,17 @@
+# Configuration options for NXP HDLC RCP SPI communication Interface
+
+# Copyright (c) 2025 Basalte bv
+# SPDX-License-Identifier: Apache-2.0
+
+config HDLC_RCP_IF_SPI
+	bool "SPI HDLC interface for Zephyr Openthread RCP host"
+	default y
+	depends on DT_HAS_SPI_HDLC_RCP_IF_ENABLED
+
+config OPENTHREAD_HDLC_RCP_IF_SPI_RX_BUFFER_SIZE
+	int "Set HDLC RCP IF SPI RX buffer size"
+	depends on HDLC_RCP_IF_SPI
+	default 32
+	range 0 2043
+	help
+	  RX buffer size for the OpenThread HDLC host SPI.
