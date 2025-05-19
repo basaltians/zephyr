@@ -1,0 +1,29 @@
+/*
+ * Copyright (c) 2025 Basalte bv
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/**
+ * Overlay to enable support for OpenThread's RCP SPI communication
+ * on the imxrt1170_evk board.
+ */
+
+/ {
+	chosen {
+		zephyr,hdlc-rcp-if = &hdlc_rcp_if;
+	};
+};
+
+&lpspi1 {
+	status = "okay";
+
+	hdlc_rcp_if: hdlc_rcp_if@0 {
+		compatible = "spi,hdlc-rcp-if";
+		status = "okay";
+		reg = <0>;
+
+		spi-max-frequency = <25000000>;
+		int-gpios = <&gpio8 31 GPIO_ACTIVE_LOW>;
+	};
+};
