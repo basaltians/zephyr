@@ -1,0 +1,11 @@
+# Copyright (c) 2025 Basalte bv
+#
+# SPDX-License-Identifier: Apache-2.0
+
+config FUEL_GAUGE_BQ2742X
+	bool "BQ2742X Fuel Gauge"
+	default y
+	depends on DT_HAS_TI_BQ2742X_ENABLED
+	select I2C
+	help
+	  Enable I2C-based driver for BQ2742X Fuel Gauge.
