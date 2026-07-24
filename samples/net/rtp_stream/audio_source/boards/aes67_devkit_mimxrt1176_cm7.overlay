@@ -1,0 +1,6 @@
+/ {
+	chosen {
+		basalte,i2s-in = &sai1;
+		basalte,adc = &input0_adc;
+	};
+};
