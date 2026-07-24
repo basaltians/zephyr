@@ -1,0 +1,8 @@
+
+tests:
+  sample.net.rtp_stream.sink:
+    build_only: true
+    platform_allow:
+      - aes67_devkit/mimxrt1176/cm7
+    integration_platforms:
+      - aes67_devkit/mimxrt1176/cm7

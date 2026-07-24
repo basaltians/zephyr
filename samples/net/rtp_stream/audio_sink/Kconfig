@@ -1,0 +1,79 @@
+config RTP_AUDIO_STREAM_SAMPLE_SAMPLE_RATE
+	int "RTP Audio Stream Sample Sample Rate"
+	default 48000
+	help
+	  Sample rate of the rtp audio stream sample
+
+
+config RTP_AUDIO_STREAM_SAMPLE_N_BLOCKS
+	int "RTP Audio Stream Sample N Blocks"
+	default 10
+	help
+	  Number of blocks inside the I2S memslab.
+	  Advised to be at least twice RTP_AUDIO_STREAM_SAMPLE_JITTER_BUFFER_SIZE
+
+config RTP_AUDIO_STREAM_SAMPLE_JITTER_BUFFER_SIZE
+	int "RTP Audio Stream Sample Jitter Buffer Size"
+	default 5
+	help
+	  Number of blocks that get buffered when playing the audio. Should be smaller than the
+	  number of blocks in the memslab
+
+choice RTP_AUDIO_STREAM_SAMPLE_PAYLOAD_DURATION
+	prompt "Duration of the payload of 1 RTP packet"
+	default RTP_AUDIO_STREAM_SAMPLE_PAYLOAD_DURATION_1MS
+	help
+	  Given stereo audio sampled at 48kHz
+
+config RTP_AUDIO_STREAM_SAMPLE_PAYLOAD_DURATION_0_5MS
+	bool "RTP Audio Stream Sample Payload Duration 0.5 ms"
+
+config RTP_AUDIO_STREAM_SAMPLE_PAYLOAD_DURATION_1MS
+	bool "RTP Audio Stream Sample Payload Duration 1 ms"
+
+config RTP_AUDIO_STREAM_SAMPLE_PAYLOAD_DURATION_2MS
+	bool "RTP Audio Stream Sample Payload Duration 2 ms"
+
+config RTP_AUDIO_STREAM_SAMPLE_PAYLOAD_DURATION_3MS
+	bool "RTP Audio Stream Sample Payload Duration 3 ms"
+
+config RTP_AUDIO_STREAM_SAMPLE_PAYLOAD_DURATION_4MS
+	bool "RTP Audio Stream Sample Payload Duration 4 ms"
+
+config RTP_AUDIO_STREAM_SAMPLE_PAYLOAD_DURATION_5MS
+	bool "RTP Audio Stream Sample Payload Duration 5 ms"
+
+endchoice
+
+config RTP_AUDIO_STREAM_SAMPLE_PAYLOAD_DURATION_US
+	int
+	default 500 if RTP_AUDIO_STREAM_SAMPLE_PAYLOAD_DURATION_0_5MS
+	default 1000 if RTP_AUDIO_STREAM_SAMPLE_PAYLOAD_DURATION_1MS
+	default 2000 if RTP_AUDIO_STREAM_SAMPLE_PAYLOAD_DURATION_2MS
+	default 3000 if RTP_AUDIO_STREAM_SAMPLE_PAYLOAD_DURATION_3MS
+	default 4000 if RTP_AUDIO_STREAM_SAMPLE_PAYLOAD_DURATION_4MS
+	default 5000 if RTP_AUDIO_STREAM_SAMPLE_PAYLOAD_DURATION_5MS
+
+config RTP_AUDIO_STREAM_SAMPLE_PAYLOAD_SIZE
+	int
+	default 144 if RTP_AUDIO_STREAM_SAMPLE_PAYLOAD_DURATION_0_5MS # 1 * 48 * 3
+	default 288 if RTP_AUDIO_STREAM_SAMPLE_PAYLOAD_DURATION_1MS # 2 * 48 * 3
+	default 576 if RTP_AUDIO_STREAM_SAMPLE_PAYLOAD_DURATION_2MS # 2 * 2 * 48 * 3
+	default 864 if RTP_AUDIO_STREAM_SAMPLE_PAYLOAD_DURATION_3MS # 3 * 2 * 48 * 3
+	default 1152 if RTP_AUDIO_STREAM_SAMPLE_PAYLOAD_DURATION_4MS # 4 * 2 * 48 * 3
+	default 1440 if RTP_AUDIO_STREAM_SAMPLE_PAYLOAD_DURATION_5MS # 5 * 2 * 48 * 3
+	help
+	  Given stereo audio encoded with 24bit
+
+config RTP_AUDIO_STREAM_SAMPLE_I2S_BLOCK_SIZE
+	int
+	default 192  if RTP_AUDIO_STREAM_SAMPLE_PAYLOAD_DURATION_0_5MS # 1 * 48 * 4
+	default 384 if RTP_AUDIO_STREAM_SAMPLE_PAYLOAD_DURATION_1MS # 2 * 48 * 4
+	default 768 if RTP_AUDIO_STREAM_SAMPLE_PAYLOAD_DURATION_2MS # 2 * 2 * 48 * 4
+	default 1152 if RTP_AUDIO_STREAM_SAMPLE_PAYLOAD_DURATION_3MS # 3 * 2 * 48 * 4
+	default 1536 if RTP_AUDIO_STREAM_SAMPLE_PAYLOAD_DURATION_4MS # 4 * 2 * 48 * 4
+	default 1920 if RTP_AUDIO_STREAM_SAMPLE_PAYLOAD_DURATION_5MS # 5 * 2 * 48 * 4
+	help
+	  Given stereo audio sampled at 32bit (due to DMA limitations)
+
+source "Kconfig.zephyr"

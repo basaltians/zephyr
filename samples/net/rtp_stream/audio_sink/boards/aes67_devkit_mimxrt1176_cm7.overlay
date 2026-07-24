@@ -1,0 +1,6 @@
+/ {
+	chosen {
+		basalte,i2s-out = &sai1;
+		basalte,dac = &output0_dac;
+	};
+};
