@@ -1,0 +1,3 @@
+&enet_mac {
+	local-mac-address = [02 04 9f b0 38 4f];
+};
