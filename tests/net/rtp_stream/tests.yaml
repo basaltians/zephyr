@@ -1,0 +1,20 @@
+
+common:
+  depends_on: netif
+  tags:
+    - net
+    - rtp
+  platform_allow:
+    - native_sim
+    - native_sim/native/64
+  integration_platforms:
+    - native_sim
+
+
+tests:
+  net.rtp_stream.loopback.socket:
+    extra_configs:
+      - CONFIG_ZVFS_POLL_MAX=5
+  net.rtp_stream.loopback.net_pkt:
+    extra_configs:
+      - CONFIG_RTP_TRANSPORT_NET_PKT=y
