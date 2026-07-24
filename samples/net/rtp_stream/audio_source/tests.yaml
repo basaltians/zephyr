@@ -1,0 +1,8 @@
+
+tests:
+  sample.net.rtp_stream.source:
+    build_only: true
+    platform_allow:
+      - aes67_devkit
+    integration_platforms:
+      - aes67_devkit
