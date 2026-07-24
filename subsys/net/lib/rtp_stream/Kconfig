@@ -1,0 +1,23 @@
+# SPDX-FileCopyrightText: 2026 Basalte bv
+# SPDX-License-Identifier: Apache-2.0
+
+config RTP_STREAM
+	bool "RTP Stream"
+	depends on RTP
+	help
+	  Enable the RTP stream subsystem
+
+if RTP_STREAM
+
+module = RTP_STREAM
+module-str = RTP Stream
+module-help = Sets log level for RTP streams
+source "subsys/logging/Kconfig.template.log_config"
+
+config RTP_STREAM_RX_MSGQ_SIZE
+	int "RTP Audio Stream RX MSGQ Size"
+	default 5
+	help
+	  Number of receiver RTP packets that can be queued untill read by application
+
+endif # RTP_STREAM
