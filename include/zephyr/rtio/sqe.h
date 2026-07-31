@@ -2,6 +2,7 @@
  * SPDX-FileCopyrightText: Copyright (c) 2022 Intel Corporation
  * SPDX-FileCopyrightText: Copyright (c) 2026 Infineon Technologies AG,
  * SPDX-FileCopyrightText: or an affiliate of Infineon Technologies AG. All rights reserved.
+ * SPDX-FileCopyrightText: 2026 Basalte bv
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -179,6 +180,12 @@ extern "C" {
 
 /** An operation to await a signal while blocking the iodev (if one is provided) */
 #define RTIO_OP_AWAIT (RTIO_OP_I3C_CCC+1)
+
+/** An operation to configure I2S buses */
+#define RTIO_OP_I2S_CONFIGURE (RTIO_OP_AWAIT + 1)
+
+/** An operation to trigger an I2S action (start/stop/drain/drop) */
+#define RTIO_OP_I2S_TRIGGER (RTIO_OP_I2S_CONFIGURE + 1)
 
 /**
  * @}
@@ -408,6 +415,18 @@ struct rtio_sqe {
 		/** OP_I3C_CCC */
 		/* struct i3c_ccc_payload *ccc_payload; */
 		void *ccc_payload;
+
+		/** OP_I2S_CONFIGURE */
+		struct {
+			void *config; /**< struct i2s_config * config */
+			int dir;      /**< enum i2s_dir dir */
+		} i2s_config;
+
+		/** OP_I2S_TRIGGER */
+		struct {
+			int cmd; /**< enum i2s_trigger_cmd cmd */
+			int dir; /**< enum i2s_dir dir */
+		} i2s_trigger;
 	};
 };
 
@@ -822,6 +841,53 @@ static inline void rtio_sqe_prep_i2c_recover(struct rtio_sqe *sqe,
 	sqe->op = RTIO_OP_I2C_RECOVER;
 	sqe->prio = prio;
 	sqe->iodev = iodev;
+	sqe->userdata = userdata;
+}
+
+/**
+ * @brief Prepare an i2s configure op submission
+ *
+ * @param sqe SQE to prepare
+ * @param iodev Device to operate on
+ * @param prio Op priority
+ * @param dir enum i2s_dir value (RX/TX/BOTH), passed as int to avoid an i2s.h
+ *            include dependency in this header
+ * @param config Pointer to a struct i2s_config describing the desired configuration
+ * @param userdata User data returned upon completion
+ */
+static inline void rtio_sqe_prep_i2s_configure(struct rtio_sqe *sqe, const struct rtio_iodev *iodev,
+					       int8_t prio, int dir, void *config, void *userdata)
+{
+	memset(sqe, 0, sizeof(struct rtio_sqe));
+	sqe->op = RTIO_OP_I2S_CONFIGURE;
+	sqe->prio = prio;
+	sqe->iodev = iodev;
+	sqe->i2s_config.dir = dir;
+	sqe->i2s_config.config = config;
+	sqe->userdata = userdata;
+}
+
+/**
+ * @brief Prepare an i2s trigger op submission
+ *
+ * @param sqe SQE to prepare
+ * @param iodev Device to operate on
+ * @param prio Op priority
+ * @param dir enum i2s_dir value (RX/TX/BOTH), passed as int to avoid an i2s.h
+ *            include dependency in this header
+ * @param cmd enum i2s_trigger_cmd value (START/STOP/DRAIN/DROP/PREPARE), passed
+ *            as int to avoid an i2s.h include dependency in this header
+ * @param userdata User data returned upon completion
+ */
+static inline void rtio_sqe_prep_i2s_trigger(struct rtio_sqe *sqe, const struct rtio_iodev *iodev,
+					     int8_t prio, int dir, int cmd, void *userdata)
+{
+	memset(sqe, 0, sizeof(struct rtio_sqe));
+	sqe->op = RTIO_OP_I2S_TRIGGER;
+	sqe->prio = prio;
+	sqe->iodev = iodev;
+	sqe->i2s_trigger.dir = dir;
+	sqe->i2s_trigger.cmd = cmd;
 	sqe->userdata = userdata;
 }
 
