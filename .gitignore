@@ -129,3 +129,6 @@ ZephyrModuleFile.txt
 
 # Node dependecies
 node_modules
+
+# Personal CLAUDE instructions
+CLAUDE.local.md
