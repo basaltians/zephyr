@@ -17,7 +17,16 @@ source "subsys/logging/Kconfig.template.log_config"
 config RTP_STREAM_RX_MSGQ_SIZE
 	int "RTP Audio Stream RX MSGQ Size"
 	default 5
+	depends on !RTP_STREAM_RTIO
 	help
 	  Number of receiver RTP packets that can be queued untill read by application
+
+config RTP_STREAM_RTIO
+	bool "RTP Stream RTIO [Experimental]"
+	select EXPERIMENTAL
+	select RTIO
+	select RTIO_SYS_MEM_BLOCKS
+	help
+	  Enable the RTIO API for RTP stream RX.
 
 endif # RTP_STREAM

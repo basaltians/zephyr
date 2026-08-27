@@ -53,15 +53,74 @@ static int rtp_stream_codec_decode(struct rtp_stream *stream, void *data, size_t
 	return api->decode(data, size, decoded_size, user_data);
 }
 
+#ifdef CONFIG_RTP_STREAM_RTIO
+static void rtp_stream_rtio_rx_submit(struct rtp_stream *stream, struct rtio_iodev_sqe *iodev_sqe)
+{
+	int ret;
+
+	ret = k_mutex_lock(&stream->lock, LOCK_TIMEOUT_API);
+	if (ret < 0) {
+		LOG_ERR("Failed to take lock (%d)", ret);
+		rtio_iodev_sqe_err(iodev_sqe, ret);
+		return;
+	}
+
+	if (!role_is_sink(stream->role)) {
+		LOG_ERR("Stream is no sink");
+		(void)k_mutex_unlock(&stream->lock);
+		rtio_iodev_sqe_err(iodev_sqe, -EINVAL);
+		return;
+	}
+
+	mpsc_push(&stream->rtio_rx_q, &iodev_sqe->q);
+
+	(void)k_mutex_unlock(&stream->lock);
+}
+
+static void rtp_stream_rtio_rx_purge(struct rtp_stream *stream)
+{
+	struct mpsc_node *node;
+
+	while ((node = mpsc_pop(&stream->rtio_rx_q)) != NULL) {
+		rtio_iodev_sqe_err(CONTAINER_OF(node, struct rtio_iodev_sqe, q), -ECANCELED);
+	}
+}
+
+static void rtp_stream_iodev_submit(struct rtio_iodev_sqe *iodev_sqe)
+{
+	struct rtp_stream *stream = (struct rtp_stream *)iodev_sqe->sqe.iodev->data;
+
+	if (iodev_sqe->sqe.op != RTIO_OP_RX) {
+		LOG_ERR("Unsupported op code %d", iodev_sqe->sqe.op);
+		rtio_iodev_sqe_err(iodev_sqe, -EINVAL);
+		return;
+	}
+
+	rtp_stream_rtio_rx_submit(stream, iodev_sqe);
+}
+
+const struct rtio_iodev_api rtp_stream_iodev_api = {
+	.submit = rtp_stream_iodev_submit,
+};
+#endif /* CONFIG_RTP_STREAM_RTIO */
+
 static void rtp_stream_rtp_callback(struct rtp_session *session, struct rtp_packet *packet,
 				    void *user_data)
 {
 	__ASSERT_NO_MSG(user_data != NULL);
 	struct rtp_stream *stream = (struct rtp_stream *)user_data;
 	struct rtp_stream_config *cfg;
+	int ret;
+#ifdef CONFIG_RTP_STREAM_RTIO
+	struct mpsc_node *node;
+	struct rtio_iodev_sqe *iodev_sqe;
+	uint8_t *buf;
+	uint32_t buf_len;
+	size_t decoded_size;
+#else
 	struct rtp_msg msg = {};
 	void *mem_block;
-	int ret;
+#endif
 
 	ret = k_mutex_lock(&stream->lock, LOCK_TIMEOUT_CB);
 	if (ret < 0) {
@@ -80,13 +139,48 @@ static void rtp_stream_rtp_callback(struct rtp_session *session, struct rtp_pack
 		goto unlock;
 	}
 
-	LOG_DBG_RATELIMIT("RX memslab (used/total): (%d/%d)", cfg->mem_slab->info.num_used,
-			  cfg->mem_slab->info.num_blocks);
-
 	if (packet->payload_len > cfg->block_size) {
 		LOG_DBG("RTP payload too large (%d > %d)", packet->payload_len, cfg->block_size);
 		goto unlock;
 	}
+
+#ifdef CONFIG_RTP_STREAM_RTIO
+	node = mpsc_pop(&stream->rtio_rx_q);
+	if (node == NULL) {
+		LOG_DBG_RATELIMIT("No pending RTIO_OP_RX submission, dropping packet");
+		goto unlock;
+	}
+
+	iodev_sqe = CONTAINER_OF(node, struct rtio_iodev_sqe, q);
+
+	ret = rtio_sqe_rx_buf(iodev_sqe, cfg->block_size, cfg->block_size, &buf, &buf_len);
+	if (ret < 0 && (iodev_sqe->sqe.flags & RTIO_SQE_MEMPOOL_BUFFER) != 0U) {
+		/* The mempool refills as the consumer releases buffers: keep the read */
+		LOG_WRN_RATELIMIT("No rx buffer (%d), dropping packet", ret);
+		mpsc_push(&stream->rtio_rx_q, &iodev_sqe->q);
+		goto unlock;
+	}
+
+	if (ret < 0) {
+		LOG_ERR("Failed to get rx buffer (%d)", ret);
+		rtio_iodev_sqe_err(iodev_sqe, ret);
+		goto unlock;
+	}
+
+	memcpy(buf, packet->payload, packet->payload_len);
+
+	ret = rtp_stream_codec_decode(stream, buf, packet->payload_len, &decoded_size,
+				      cfg->user_data);
+	if (ret < 0) {
+		LOG_ERR("Failed to decode payload (%d)", ret);
+		rtio_iodev_sqe_err(iodev_sqe, ret);
+		goto unlock;
+	}
+
+	rtio_iodev_sqe_ok(iodev_sqe, (int)decoded_size);
+#else
+	LOG_DBG_RATELIMIT("RX memslab (used/total): (%d/%d)", cfg->mem_slab->info.num_used,
+			  cfg->mem_slab->info.num_blocks);
 
 	ret = k_mem_slab_alloc(cfg->mem_slab, &mem_block, K_NO_WAIT);
 	if (ret < 0) {
@@ -112,6 +206,7 @@ static void rtp_stream_rtp_callback(struct rtp_session *session, struct rtp_pack
 
 error:
 	stream->state = RTP_STREAM_STATE_ERROR;
+#endif /* CONFIG_RTP_STREAM_RTIO */
 
 unlock:
 	(void)k_mutex_unlock(&stream->lock);
@@ -123,8 +218,12 @@ int rtp_stream_init(struct rtp_stream *stream)
 		return -EINVAL;
 	}
 
+#ifdef CONFIG_RTP_STREAM_RTIO
+	mpsc_init(&stream->rtio_rx_q);
+#else
 	k_msgq_init(&stream->rx_out_msgq, (char *)stream->rx_out_msgs, sizeof(struct rtp_msg),
 		    CONFIG_RTP_STREAM_RX_MSGQ_SIZE);
+#endif
 
 	return k_mutex_init(&stream->lock);
 }
@@ -152,10 +251,18 @@ int rtp_stream_configure(struct rtp_stream *stream, enum rtp_stream_role role,
 		return -EINVAL;
 	}
 
+#ifdef CONFIG_RTP_STREAM_RTIO
+	if (role_is_sink(role) && config->codec_api->decode != NULL) {
+		LOG_ERR("RTIO sink streams cannot use a decode codec (would run in the network "
+			"RX context)");
+		return -EINVAL;
+	}
+#else
 	if (role_is_sink(role) && config->mem_slab == NULL) {
 		LOG_ERR("Sink role requires a mem_slab");
 		return -EINVAL;
 	}
+#endif
 
 	ret = k_mutex_lock(&stream->lock, LOCK_TIMEOUT_API);
 	if (ret < 0) {
@@ -220,7 +327,9 @@ unlock:
 
 int rtp_stream_trigger(struct rtp_stream *stream, enum rtp_stream_command cmd)
 {
+#ifndef CONFIG_RTP_STREAM_RTIO
 	struct rtp_msg msg;
+#endif
 	int ret;
 
 	if (stream == NULL) {
@@ -273,9 +382,13 @@ int rtp_stream_trigger(struct rtp_stream *stream, enum rtp_stream_command cmd)
 
 		ret = rtp_session_stop(stream->rtp_session);
 
+#ifdef CONFIG_RTP_STREAM_RTIO
+		rtp_stream_rtio_rx_purge(stream);
+#else
 		while (k_msgq_get(&stream->rx_out_msgq, &msg, K_NO_WAIT) == 0) {
 			k_mem_slab_free(stream->stream_config.mem_slab, msg.data);
 		}
+#endif
 
 		if (ret < 0) {
 			LOG_DBG("Failed to stop rtp session (%d)", ret);
@@ -297,9 +410,13 @@ int rtp_stream_trigger(struct rtp_stream *stream, enum rtp_stream_command cmd)
 
 		ret = rtp_session_stop(stream->rtp_session);
 
+#ifdef CONFIG_RTP_STREAM_RTIO
+		rtp_stream_rtio_rx_purge(stream);
+#else
 		while (k_msgq_get(&stream->rx_out_msgq, &msg, K_NO_WAIT) == 0) {
 			k_mem_slab_free(stream->stream_config.mem_slab, msg.data);
 		}
+#endif
 
 		if (ret < 0) {
 			LOG_DBG("Failed to stop rtp session (%d)", ret);
@@ -323,6 +440,13 @@ unlock:
 
 int rtp_stream_read(struct rtp_stream *stream, struct rtp_msg *msg, k_timeout_t timeout)
 {
+#ifdef CONFIG_RTP_STREAM_RTIO
+	ARG_UNUSED(stream);
+	ARG_UNUSED(msg);
+	ARG_UNUSED(timeout);
+
+	return -ENOSYS;
+#else
 	struct rtp_stream_config *cfg;
 	size_t decoded_size;
 	int status, ret;
@@ -385,6 +509,7 @@ unlock:
 	(void)k_mutex_unlock(&stream->lock);
 
 	return ret;
+#endif /* CONFIG_RTP_STREAM_RTIO */
 }
 
 int rtp_stream_write(struct rtp_stream *stream, void *data, size_t size, uint32_t *timestamp)

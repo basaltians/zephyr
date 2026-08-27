@@ -19,6 +19,10 @@
 
 #include <zephyr/kernel.h>
 #include <zephyr/net/rtp.h>
+#ifdef CONFIG_RTP_STREAM_RTIO
+#include <zephyr/rtio/rtio.h>
+#include <zephyr/sys/mpsc_lockfree.h>
+#endif
 
 #ifdef __cplusplus
 extern "C" {
@@ -112,6 +116,13 @@ struct rtp_stream_codec_api {
 	 * Called from @ref rtp_stream_read with the payload most
 	 * recently popped from the stream's receive queue.
 	 *
+	 * Must be NULL for a sink or both-role stream when
+	 * @kconfig{CONFIG_RTP_STREAM_RTIO} is enabled: an RTIO sink has no
+	 * equivalent app-paced call to run this from, so it would instead run
+	 * on whichever thread delivers the packet (the RTP transport's shared
+	 * RX dispatch context, not specific to this stream) - see
+	 * @ref rtp_stream_configure.
+	 *
 	 * @param data              Buffer to transform in place.
 	 * @param size              Length of @p data in bytes before decoding.
 	 * @param[out] decoded_size Length of the decoded data in @p data, in
@@ -156,14 +167,18 @@ struct rtp_stream_config {
 	enum rtp_transport_type transport_type;
 
 	/** Memory slab that receive blocks are allocated from and returned
-	 *  to. Must be set, with a block size of at least @p block_size. Used
-	 *  to buffer received blocks when the stream role is
-	 *  @ref RTP_STREAM_ROLE_SINK or @ref RTP_STREAM_ROLE_BOTH.
+	 *  to, with a block size of at least @p block_size. Used to buffer
+	 *  received blocks when the stream role is @ref RTP_STREAM_ROLE_SINK
+	 *  or @ref RTP_STREAM_ROLE_BOTH. Must be set for those roles, unless
+	 *  @kconfig{CONFIG_RTP_STREAM_RTIO} is enabled, in which case receive
+	 *  buffers come from the RTIO submission instead and this is unused.
 	 */
 	struct k_mem_slab *mem_slab;
 
 	/** Maximum accepted RTP payload length in bytes; checked against
-	 *  @p mem_slab's block size. Larger received packets are dropped.
+	 *  @p mem_slab's block size, or the RTIO submission's buffer size
+	 *  when @kconfig{CONFIG_RTP_STREAM_RTIO} is enabled. Larger received
+	 *  packets are dropped.
 	 */
 	size_t block_size;
 
@@ -230,6 +245,10 @@ struct rtp_stream {
 	/** Guard access to the stream */
 	struct k_mutex lock;
 
+#ifdef CONFIG_RTP_STREAM_RTIO
+	/** FIFO of RTIO_OP_RX submissions awaiting an incoming packet. */
+	struct mpsc rtio_rx_q;
+#else
 	/** Backing storage for @p rx_out_msgq. */
 	struct rtp_msg rx_out_msgs[CONFIG_RTP_STREAM_RX_MSGQ_SIZE];
 	/** Queue of decoded receive blocks awaiting
@@ -239,6 +258,7 @@ struct rtp_stream {
 	 */
 
 	struct k_msgq rx_out_msgq;
+#endif /* CONFIG_RTP_STREAM_RTIO */
 
 	/** Current lifecycle state. */
 	enum rtp_stream_state state;
@@ -285,6 +305,29 @@ struct rtp_stream {
  */
 #define RTP_STREAM_DEFINE_STATIC(_name) __z_rtp_stream_define(_name, static)
 
+#ifdef CONFIG_RTP_STREAM_RTIO
+/** @cond INTERNAL_HIDDEN */
+extern const struct rtio_iodev_api rtp_stream_iodev_api;
+/** @endcond */
+
+/**
+ * @brief Define an RTP stream together with an RTIO iodev bound to it.
+ *
+ * Equivalent to @ref RTP_STREAM_DEFINE_STATIC, additionally defining an
+ * RTIO iodev named @p _name @c ##_iodev that can be used to submit
+ * RTIO_OP_RX requests against the stream (see @ref rtp_stream_init and
+ * @ref rtp_stream_configure to make the stream ready for use; sending still
+ * goes through @ref rtp_stream_write). A packet that finds the mempool of a
+ * read empty is dropped, and the read stays pending for the next packet.
+ *
+ * @param _name Name of the @ref rtp_stream variable to define; the iodev is
+ *              defined as @p _name @c ##_iodev.
+ */
+#define RTP_STREAM_IODEV_DEFINE(_name)                                                             \
+	RTP_STREAM_DEFINE_STATIC(_name);                                                           \
+	static RTIO_IODEV_DEFINE(_name##_iodev, &rtp_stream_iodev_api, (void *)&(_name))
+#endif /* CONFIG_RTP_STREAM_RTIO */
+
 /**
  * @brief Initialize an RTP stream.
  *
@@ -318,6 +361,9 @@ int rtp_stream_init(struct rtp_stream *stream);
  *
  * @retval 0        On success; the stream transitions to
  *                  @ref RTP_STREAM_STATE_READY.
+ * @retval -EINVAL  If @p config->codec_api->decode is set for a sink or
+ *                  both-role stream while @kconfig{CONFIG_RTP_STREAM_RTIO}
+ *                  is enabled; see @ref rtp_stream_codec_api::decode.
  * @retval negative Errno value on failure.
  */
 int rtp_stream_configure(struct rtp_stream *stream, enum rtp_stream_role role,
@@ -341,6 +387,10 @@ int rtp_stream_trigger(struct rtp_stream *stream, enum rtp_stream_command cmd);
  * Waits up to @p timeout for a block to become available in the stream's
  * receive queue, then decodes it in place with the stream's codec API.
  *
+ * Not available when @kconfig{CONFIG_RTP_STREAM_RTIO} is enabled; receive
+ * instead by submitting RTIO_OP_RX requests against the stream's iodev (see
+ * @ref RTP_STREAM_IODEV_DEFINE).
+ *
  * @param stream     Pointer to the RTP stream.
  * @param[out] msg    Populated with the decoded block, its length, and the
  *                    sequence number and timestamp of the RTP packet it
@@ -355,6 +405,7 @@ int rtp_stream_trigger(struct rtp_stream *stream, enum rtp_stream_command cmd);
  *                  to retry.
  * @retval -EIO     If no block became available and the stream is in
  *                  @ref RTP_STREAM_STATE_ERROR.
+ * @retval -ENOSYS  If @kconfig{CONFIG_RTP_STREAM_RTIO} is enabled.
  * @retval negative Errno value from the codec's decode callback on failure.
  */
 int rtp_stream_read(struct rtp_stream *stream, struct rtp_msg *msg, k_timeout_t timeout);
