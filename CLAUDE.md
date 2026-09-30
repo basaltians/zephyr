@@ -7,9 +7,9 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Context
 
-This is the upstream Zephyr RTOS source tree, checked out as a module inside a larger west workspace rooted at `~/AES67`. The workspace's manifest/application repo (`aes67`, a sibling directory) builds firmware for Basalte products implementing **AES67** — an audio-over-IP networking standard built on RTP/RTCP media transport, PTP clock synchronization, and SAP session announcements.
+This is the upstream Zephyr RTOS source tree, checked out as a module inside a larger west workspace rooted at `~/Sonata`. The workspace's manifest/application repo (`sonata`, a sibling directory) builds firmware for Basalte products implementing **AES67** — an audio-over-IP networking standard built on RTP/RTCP media transport, PTP clock synchronization, and SAP session announcements.
 
-Treat this directory as vendored upstream Zephyr: avoid adding product- or application-specific code here. Application code, custom boards, and drivers for AES67 products live in the `aes67` (and `bzf`) repos alongside this one.
+Treat this directory as vendored upstream Zephyr: avoid adding product- or application-specific code here. Application code, custom boards, and drivers for Sonata products live in the `sonata` (and `bzf`) repos alongside this one.
 
 ## Code style
 

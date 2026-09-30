@@ -23,7 +23,7 @@ if(CONFIG_SOC_FAMILY_NXP_IMXRT)
       LOCATION "ITCM_TEXT" NOKEEP)
   endif()
   if(CONFIG_RTP_AUDIO_STREAM)
-    zephyr_code_relocate(LIBRARY ..__aes67__subsys__audio_stream__rtp
+    zephyr_code_relocate(LIBRARY ..__sonata__subsys__audio_stream__rtp
       LOCATION "ITCM_TEXT" NOKEEP)
   endif()
 endif()
