@@ -144,29 +144,32 @@ static inline void ts_register_tx_event(const struct device *dev,
 	struct nxp_enet_mac_data *data = dev->data;
 	struct net_pkt *pkt = frameinfo->context;
 
-	if (pkt && atomic_get(&pkt->atomic_ref) > 0) {
-		if (net_pkt_is_tx_timestamping(pkt) && frameinfo->isTsAvail) {
-			/* Timestamp is written to packet in ISR.
-			 * Semaphore ensures sequential execution of writing
-			 * the timestamp here and subsequently reading the timestamp
-			 * after waiting for the semaphore in eth_wait_for_ptp_ts().
-			 */
-
-			pkt->timestamp.nanosecond = frameinfo->timeStamp.nanosecond;
-			pkt->timestamp.second = frameinfo->timeStamp.second;
-
-			net_if_add_tx_timestamp(pkt);
-			k_sem_give(&data->ptp.ptp_ts_sem);
-		}
-		net_pkt_unref(pkt);
+	/* Only timestamped frames carry a context, with a reference taken in eth_nxp_enet_tx() */
+	if (pkt == NULL) {
+		return;
 	}
+
+	if (frameinfo->isTsAvail) {
+		/* Timestamp is written to packet in ISR.
+		 * Semaphore ensures sequential execution of writing
+		 * the timestamp here and subsequently reading the timestamp
+		 * after waiting for the semaphore in eth_wait_for_ptp_ts().
+		 */
+
+		pkt->timestamp.nanosecond = frameinfo->timeStamp.nanosecond;
+		pkt->timestamp.second = frameinfo->timeStamp.second;
+
+		net_if_add_tx_timestamp(pkt);
+	}
+
+	k_sem_give(&data->ptp.ptp_ts_sem);
+	net_pkt_unref(pkt);
 }
 
-static inline void eth_wait_for_ptp_ts(const struct device *dev, struct net_pkt *pkt)
+static inline void eth_wait_for_ptp_ts(const struct device *dev)
 {
 	struct nxp_enet_mac_data *data = dev->data;
 
-	net_pkt_ref(pkt);
 	while (k_sem_take(&data->ptp.ptp_ts_sem, K_MSEC(200)) != 0) {
 		LOG_ERR("error on take PTP semaphore");
 	}
@@ -273,6 +276,7 @@ static int eth_nxp_enet_tx(const struct device *dev, struct net_pkt *pkt)
 {
 	struct nxp_enet_mac_data *data = dev->data;
 	uint16_t total_len = net_pkt_get_len(pkt);
+	struct net_pkt *ts_pkt = NULL;
 	bool frame_is_timestamped;
 	status_t ret;
 
@@ -291,17 +295,27 @@ static int eth_nxp_enet_tx(const struct device *dev, struct net_pkt *pkt)
 
 	frame_is_timestamped = net_pkt_is_tx_timestamping(pkt);
 
+	/* Must be taken before sending, the TX completion IRQ may fire before ENET_SendFrame()
+	 * returns. Released in ts_register_tx_event().
+	 */
+	if (IS_ENABLED(CONFIG_PTP_CLOCK_NXP_ENET) && frame_is_timestamped) {
+		ts_pkt = net_pkt_ref(pkt);
+	}
+
 	ret = ENET_SendFrame(data->base, &data->enet_handle, data->tx_frame_buf, total_len, RING_ID,
-			     frame_is_timestamped, pkt);
+			     frame_is_timestamped, ts_pkt);
 
 	if (ret != kStatus_Success) {
 		LOG_ERR("ENET_SendFrame error: %d", ret);
+		if (ts_pkt != NULL) {
+			net_pkt_unref(ts_pkt);
+		}
 		ENET_ReclaimTxDescriptor(data->base, &data->enet_handle, RING_ID);
 		return -EIO;
 	}
 
 	if (frame_is_timestamped) {
-		eth_wait_for_ptp_ts(dev, pkt);
+		eth_wait_for_ptp_ts(dev);
 	}
 
 	return 0;
