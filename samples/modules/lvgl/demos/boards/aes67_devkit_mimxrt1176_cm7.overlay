@@ -1,0 +1,30 @@
+/*
+ * Copyright (c) Basalte bv
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+#include <zephyr/dt-bindings/memory-attr/memory-attr-arm.h>
+
+/* Everything but the frame buffers in the DTCM, see aes67_devkit_mimxrt1176_cm7.cmake */
+/ {
+	chosen {
+		zephyr,sram = &dtcm;
+		/delete-property/ zephyr,dtcm;
+	};
+};
+
+&dtcm {
+	compatible = "nxp,imx-dtcm";
+	/delete-property/ zephyr,memory-region;
+};
+
+/*
+ * The SoC linker script already declares an SDRAM region. Without an MPU region the default
+ * memory map would make the frame buffers write-through.
+ */
+&sdram0 {
+	compatible = "zephyr,memory-region";
+	zephyr,memory-region = "SDRAM0";
+	zephyr,memory-attr = <DT_MEM_ARM(ATTR_MPU_RAM)>;
+};

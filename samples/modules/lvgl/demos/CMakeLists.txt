@@ -18,6 +18,10 @@ target_include_directories(app PRIVATE
     ${LVGL_DIR}/demos/
 )
 
+if(CONFIG_BOARD_AES67_DEVKIT_MIMXRT1176_CM7)
+  include(${CMAKE_CURRENT_SOURCE_DIR}/boards/aes67_devkit_mimxrt1176_cm7.cmake)
+endif()
+
 target_sources_ifdef(CONFIG_LV_USE_DEMO_MUSIC app PRIVATE
     ${LVGL_DIR}/demos/music/assets/img_lv_demo_music_btn_corner_large.c
     ${LVGL_DIR}/demos/music/assets/img_lv_demo_music_btn_list_pause.c
