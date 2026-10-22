@@ -27,7 +27,7 @@ LOG_MODULE_DECLARE(net_ipv4, CONFIG_NET_IPV4_LOG_LEVEL);
 #include "igmp.h"
 
 /* Timeout for various buffer allocations in this file. */
-#define PKT_WAIT_TIME K_MSEC(50)
+#define PKT_WAIT_TIME K_MSEC(5)
 
 #define IPV4_OPT_HDR_ROUTER_ALERT_LEN 4
 
