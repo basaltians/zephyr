@@ -17,6 +17,8 @@
 #ifndef RTP_STREAM_H_
 #define RTP_STREAM_H_
 
+#include <string.h>
+
 #include <zephyr/kernel.h>
 #include <zephyr/net/rtp.h>
 #ifdef CONFIG_RTP_STREAM_RTIO
@@ -176,9 +178,10 @@ struct rtp_stream_config {
 	struct k_mem_slab *mem_slab;
 
 	/** Maximum accepted RTP payload length in bytes; checked against
-	 *  @p mem_slab's block size, or the RTIO submission's buffer size
-	 *  when @kconfig{CONFIG_RTP_STREAM_RTIO} is enabled. Larger received
-	 *  packets are dropped.
+	 *  @p mem_slab's block size. Larger received packets are dropped.
+	 *  When @kconfig{CONFIG_RTP_STREAM_RTIO} is enabled, the buffer of
+	 *  each RTIO_OP_RX submission must hold
+	 *  @ref RTP_STREAM_RTIO_RX_BUF_SIZE of it.
 	 */
 	size_t block_size;
 
@@ -227,6 +230,45 @@ struct rtp_msg {
 	/** RTP timestamp of the packet the block was received in. */
 	uint32_t ts;
 };
+
+/** RTP header fields of the packet an RTIO_OP_RX submission completed
+ *  with, stored at the end of the submission's buffer, behind the payload.
+ *  Read it with @ref rtp_stream_rtio_rx_info_get.
+ */
+struct rtp_stream_rx_info {
+	/** RTP timestamp of the packet. */
+	uint32_t ts;
+
+	/** Sequence number of the packet. */
+	uint16_t seq;
+};
+
+/**
+ * @brief Buffer size an RTIO_OP_RX submission needs.
+ *
+ * Room for a payload of @p block_size bytes, and the
+ * @ref rtp_stream_rx_info behind it.
+ *
+ * @param block_size The @p block_size of the stream configuration.
+ */
+#define RTP_STREAM_RTIO_RX_BUF_SIZE(block_size) ((block_size) + sizeof(struct rtp_stream_rx_info))
+
+/**
+ * @brief Get the RTP header fields of a completed RTIO_OP_RX submission.
+ *
+ * The buffer may be converted in place after this call: the fields are
+ * copied out of its end.
+ *
+ * @param buf       Buffer of the submission, from the submission itself or
+ *                  from the RTIO mempool.
+ * @param buf_len   Length of that buffer, not the length of the payload.
+ * @param[out] info The RTP timestamp and sequence number of the packet.
+ */
+static inline void rtp_stream_rtio_rx_info_get(const uint8_t *buf, uint32_t buf_len,
+					       struct rtp_stream_rx_info *info)
+{
+	memcpy(info, buf + buf_len - sizeof(*info), sizeof(*info));
+}
 
 /**
  * RTP stream state.
@@ -319,6 +361,9 @@ extern const struct rtio_iodev_api rtp_stream_iodev_api;
  * @ref rtp_stream_configure to make the stream ready for use; sending still
  * goes through @ref rtp_stream_write). A packet that finds the mempool of a
  * read empty is dropped, and the read stays pending for the next packet.
+ * Each read needs a buffer of @ref RTP_STREAM_RTIO_RX_BUF_SIZE: the
+ * payload goes to its start, the @ref rtp_stream_rx_info of the packet to
+ * its end, and the read completes with the payload length.
  *
  * @param _name Name of the @ref rtp_stream variable to define; the iodev is
  *              defined as @p _name @c ##_iodev.

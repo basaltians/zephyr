@@ -25,6 +25,10 @@ LOG_MODULE_REGISTER(test);
 
 #define PAYLOAD_TYPE 97
 #define PAYLOAD_SIZE 32
+/* The payload and the rtp_stream_rx_info behind it */
+#define RX_BUF_SIZE   RTP_STREAM_RTIO_RX_BUF_SIZE(PAYLOAD_SIZE)
+/* A power of two that holds RX_BUF_SIZE: one mempool block per packet */
+#define RX_BLOCK_SIZE 64
 
 #define RTIO_SQ_SZ    8
 #define RTIO_CQ_SZ    8
@@ -38,7 +42,9 @@ RTP_STREAM_IODEV_DEFINE(sink_stream);
 RTP_STREAM_IODEV_DEFINE(source_only_stream);
 RTP_STREAM_DEFINE_STATIC(decode_codec_stream);
 
-RTIO_DEFINE_WITH_MEMPOOL(rtio_ctx, RTIO_SQ_SZ, RTIO_CQ_SZ, RTIO_N_BLOCKS, PAYLOAD_SIZE, 4);
+RTIO_DEFINE_WITH_MEMPOOL(rtio_ctx, RTIO_SQ_SZ, RTIO_CQ_SZ, RTIO_N_BLOCKS, RX_BLOCK_SIZE, 4);
+
+BUILD_ASSERT(RX_BUF_SIZE <= RX_BLOCK_SIZE);
 
 /* NULL encode/decode: payload bytes pass through unchanged */
 static struct rtp_stream_codec_api passthrough_codec_api;
@@ -164,9 +170,10 @@ ZTEST(rtp_stream_rtio_tests, test_rx_wrong_role_rejected)
 /* RTIO_OP_RX with a caller-supplied buffer, submitted before the packet arrives */
 ZTEST(rtp_stream_rtio_tests, test_rx_fixed_buffer)
 {
+	struct rtp_stream_rx_info info;
 	struct rtio_sqe *sqe;
 	struct rtio_cqe *cqe;
-	uint8_t rx_buf[PAYLOAD_SIZE] = {0};
+	uint8_t rx_buf[RX_BUF_SIZE] = {0};
 	uint8_t tx_buf[PAYLOAD_SIZE];
 	uint32_t tx_ts;
 
@@ -186,14 +193,44 @@ ZTEST(rtp_stream_rtio_tests, test_rx_fixed_buffer)
 	zassert_equal(cqe->result, PAYLOAD_SIZE);
 	zassert_mem_equal(rx_buf, tx_buf, sizeof(tx_buf));
 	rtio_cqe_release(&rtio_ctx, cqe);
+
+	rtp_stream_rtio_rx_info_get(rx_buf, sizeof(rx_buf), &info);
+	zassert_equal(info.ts, tx_ts);
+}
+
+/* A caller-supplied buffer without room for the rtp_stream_rx_info fails the read */
+ZTEST(rtp_stream_rtio_tests, test_rx_fixed_buffer_too_small)
+{
+	struct rtio_sqe *sqe;
+	struct rtio_cqe *cqe;
+	uint8_t rx_buf[PAYLOAD_SIZE];
+	uint8_t tx_buf[PAYLOAD_SIZE] = {0};
+
+	zassert_ok(rtp_stream_trigger(&sink_stream, RTP_STREAM_START));
+	zassert_ok(rtp_stream_trigger(&source_stream, RTP_STREAM_START));
+
+	sqe = rtio_sqe_acquire(&rtio_ctx);
+	zassert_not_null(sqe);
+	rtio_sqe_prep_read(sqe, &sink_stream_iodev, RTIO_PRIO_NORM, rx_buf, sizeof(rx_buf), NULL);
+	rtio_submit(&rtio_ctx, 0);
+
+	zassert_ok(rtp_stream_write(&source_stream, tx_buf, sizeof(tx_buf), NULL));
+
+	cqe = cqe_consume_timeout(&rtio_ctx, CQE_TIMEOUT_MS);
+	zassert_not_null(cqe);
+	zassert_equal(cqe->result, -ENOMEM);
+	rtio_cqe_release(&rtio_ctx, cqe);
 }
 
 /* RTIO_OP_RX with mempool-backed multishot reads keeps refilling across packets */
 ZTEST(rtp_stream_rtio_tests, test_rx_multishot)
 {
+	struct rtp_stream_rx_info info;
 	struct rtio_sqe *sqes[3];
 	struct rtio_cqe *cqe;
 	uint8_t tx_buf[PAYLOAD_SIZE];
+	uint16_t first_seq = 0;
+	uint32_t tx_ts;
 	uint8_t *buf;
 	uint32_t buf_len;
 
@@ -209,7 +246,7 @@ ZTEST(rtp_stream_rtio_tests, test_rx_multishot)
 
 	for (size_t i = 0; i < 3 * ARRAY_SIZE(sqes); i++) {
 		memset(tx_buf, (uint8_t)(0x10 + i), sizeof(tx_buf));
-		zassert_ok(rtp_stream_write(&source_stream, tx_buf, sizeof(tx_buf), NULL));
+		zassert_ok(rtp_stream_write(&source_stream, tx_buf, sizeof(tx_buf), &tx_ts));
 
 		cqe = cqe_consume_timeout(&rtio_ctx, CQE_TIMEOUT_MS);
 		zassert_not_null(cqe);
@@ -218,6 +255,13 @@ ZTEST(rtp_stream_rtio_tests, test_rx_multishot)
 		zassert_ok(rtio_cqe_get_mempool_buffer(&rtio_ctx, cqe, &buf, &buf_len));
 		zassert_not_null(buf);
 		zassert_mem_equal(buf, tx_buf, sizeof(tx_buf));
+
+		rtp_stream_rtio_rx_info_get(buf, buf_len, &info);
+		zassert_equal(info.ts, tx_ts);
+		if (i == 0) {
+			first_seq = info.seq;
+		}
+		zassert_equal(info.seq, (uint16_t)(first_seq + i));
 
 		rtio_release_buffer(&rtio_ctx, buf, buf_len);
 		rtio_cqe_release(&rtio_ctx, cqe);

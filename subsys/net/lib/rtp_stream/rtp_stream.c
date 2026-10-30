@@ -114,6 +114,7 @@ static void rtp_stream_rtp_callback(struct rtp_session *session, struct rtp_pack
 #ifdef CONFIG_RTP_STREAM_RTIO
 	struct mpsc_node *node;
 	struct rtio_iodev_sqe *iodev_sqe;
+	struct rtp_stream_rx_info info;
 	uint8_t *buf;
 	uint32_t buf_len;
 	size_t decoded_size;
@@ -153,7 +154,8 @@ static void rtp_stream_rtp_callback(struct rtp_session *session, struct rtp_pack
 
 	iodev_sqe = CONTAINER_OF(node, struct rtio_iodev_sqe, q);
 
-	ret = rtio_sqe_rx_buf(iodev_sqe, cfg->block_size, cfg->block_size, &buf, &buf_len);
+	ret = rtio_sqe_rx_buf(iodev_sqe, RTP_STREAM_RTIO_RX_BUF_SIZE(cfg->block_size),
+			      RTP_STREAM_RTIO_RX_BUF_SIZE(cfg->block_size), &buf, &buf_len);
 	if (ret < 0 && (iodev_sqe->sqe.flags & RTIO_SQE_MEMPOOL_BUFFER) != 0U) {
 		/* The mempool refills as the consumer releases buffers: keep the read */
 		LOG_WRN_RATELIMIT("No rx buffer (%d), dropping packet", ret);
@@ -176,6 +178,10 @@ static void rtp_stream_rtp_callback(struct rtp_session *session, struct rtp_pack
 		rtio_iodev_sqe_err(iodev_sqe, ret);
 		goto unlock;
 	}
+
+	info.ts = packet->header.ts;
+	info.seq = packet->header.seq;
+	memcpy(buf + buf_len - sizeof(info), &info, sizeof(info));
 
 	rtio_iodev_sqe_ok(iodev_sqe, (int)decoded_size);
 #else
