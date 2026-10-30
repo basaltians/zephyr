@@ -476,6 +476,24 @@ int rtp_stream_read(struct rtp_stream *stream, struct rtp_msg *msg, k_timeout_t 
  */
 int rtp_stream_write(struct rtp_stream *stream, void *data, size_t size, uint32_t *timestamp);
 
+/**
+ * @brief Set the RTP timestamp of the next packet of an RTP stream.
+ *
+ * The next @ref rtp_stream_write sends its packet with @p timestamp, and
+ * the ones after it advance from there. A start of the stream picks a
+ * random timestamp again, so set it after @ref RTP_STREAM_START.
+ *
+ * @param stream    Pointer to the RTP stream. Must have been configured
+ *                  with role @ref RTP_STREAM_ROLE_SOURCE or
+ *                  @ref RTP_STREAM_ROLE_BOTH.
+ * @param timestamp RTP timestamp of the next packet.
+ *
+ * @retval 0        On success.
+ * @retval -EINVAL  If @p stream is NULL, no source, or not ready or running.
+ * @retval negative Errno value from taking a lock on failure.
+ */
+int rtp_stream_set_timestamp(struct rtp_stream *stream, uint32_t timestamp);
+
 #ifdef __cplusplus
 }
 #endif

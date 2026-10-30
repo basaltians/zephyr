@@ -569,3 +569,46 @@ unlock:
 
 	return ret;
 }
+
+int rtp_stream_set_timestamp(struct rtp_stream *stream, uint32_t timestamp)
+{
+	int ret;
+
+	if (stream == NULL) {
+		return -EINVAL;
+	}
+
+	ret = k_mutex_lock(&stream->lock, LOCK_TIMEOUT_API);
+	if (ret < 0) {
+		LOG_ERR("Failed to take lock (%d)", ret);
+		return ret;
+	}
+
+	if (!role_is_source(stream->role)) {
+		LOG_ERR("Stream is no source");
+		ret = -EINVAL;
+		goto unlock;
+	}
+
+	if (stream->state != RTP_STREAM_STATE_READY && stream->state != RTP_STREAM_STATE_RUNNING) {
+		LOG_ERR("Invalid state (%d)", stream->state);
+		ret = -EINVAL;
+		goto unlock;
+	}
+
+	/* rtp_session_send() takes the session lock to read and advance it */
+	ret = k_mutex_lock(&stream->rtp_session->lock, LOCK_TIMEOUT_API);
+	if (ret < 0) {
+		LOG_ERR("Failed to take session lock (%d)", ret);
+		goto unlock;
+	}
+
+	stream->rtp_session->timestamp = timestamp;
+
+	(void)k_mutex_unlock(&stream->rtp_session->lock);
+
+unlock:
+	(void)k_mutex_unlock(&stream->lock);
+
+	return ret;
+}

@@ -316,6 +316,55 @@ ZTEST(rtp_stream_rtio_tests, test_rx_mempool_empty_keeps_read)
 	}
 }
 
+/* The packets after rtp_stream_set_timestamp() carry its timestamp, and advance from it */
+ZTEST(rtp_stream_rtio_tests, test_set_timestamp)
+{
+	static const uint32_t timestamps[] = {0xfffffff0U, 0x00000010U, 0x12345678U};
+	struct rtp_stream_rx_info info;
+	struct rtio_sqe *sqe;
+	struct rtio_cqe *cqe;
+	uint8_t tx_buf[PAYLOAD_SIZE] = {0};
+	uint32_t tx_ts;
+	uint8_t *buf;
+	uint32_t buf_len;
+
+	zassert_ok(rtp_stream_trigger(&sink_stream, RTP_STREAM_START));
+	zassert_ok(rtp_stream_trigger(&source_stream, RTP_STREAM_START));
+
+	sqe = rtio_sqe_acquire(&rtio_ctx);
+	zassert_not_null(sqe);
+	rtio_sqe_prep_read_multishot(sqe, &sink_stream_iodev, RTIO_PRIO_NORM, NULL);
+	rtio_submit(&rtio_ctx, 0);
+
+	for (size_t i = 0; i < 2 * ARRAY_SIZE(timestamps); i++) {
+		/* Every other packet follows the one before it */
+		if (i % 2U == 0U) {
+			zassert_ok(rtp_stream_set_timestamp(&source_stream, timestamps[i / 2U]));
+		}
+
+		zassert_ok(rtp_stream_write(&source_stream, tx_buf, sizeof(tx_buf), &tx_ts));
+		zassert_equal(tx_ts, timestamps[i / 2U] + (i % 2U) * PAYLOAD_SIZE);
+
+		cqe = cqe_consume_timeout(&rtio_ctx, CQE_TIMEOUT_MS);
+		zassert_not_null(cqe);
+		zassert_equal(cqe->result, PAYLOAD_SIZE);
+		zassert_ok(rtio_cqe_get_mempool_buffer(&rtio_ctx, cqe, &buf, &buf_len));
+
+		rtp_stream_rtio_rx_info_get(buf, buf_len, &info);
+		zassert_equal(info.ts, tx_ts);
+
+		rtio_release_buffer(&rtio_ctx, buf, buf_len);
+		rtio_cqe_release(&rtio_ctx, cqe);
+	}
+}
+
+/* Only a source stream has a timestamp to set */
+ZTEST(rtp_stream_rtio_tests, test_set_timestamp_sink_rejected)
+{
+	zassert_equal(rtp_stream_set_timestamp(&sink_stream, 0U), -EINVAL);
+	zassert_equal(rtp_stream_set_timestamp(NULL, 0U), -EINVAL);
+}
+
 /* RTP_STREAM_DROP cancels a still-pending RTIO_OP_RX submission */
 ZTEST(rtp_stream_rtio_tests, test_drop_cancels_pending_rx)
 {
